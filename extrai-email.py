@@ -19,7 +19,7 @@ IGNORAR_DOMINIOS = {
     "forms.gle", "sites.google.com", "notion.so"
 }
 
-# ---- limpeza ----
+# ---- utilidades ----
 def limpar_host(url_ou_host: str) -> str:
     if not isinstance(url_ou_host, str):
         return ""
@@ -58,7 +58,7 @@ def normalizar_email(e: str) -> str:
 
 def limpar_lista_emails_str(celula: str) -> str:
     if not isinstance(celula, str) or not celula.strip():
-        return celula
+        return ""
     partes = re.split(r"[,\s]+", celula)
     limpos, vistos = [], set()
     for p in partes:
@@ -83,7 +83,7 @@ def dominio_tem_mx(dominio: str) -> bool:
     _mx_cache[dominio] = ok
     return ok
 
-# ---- scraping simples ----
+# ---- scraping ----
 def extrair_emails_site(url: str) -> list[str]:
     try:
         html = requests.get(url, timeout=12, headers={"User-Agent":"Mozilla/5.0"}).text
@@ -103,40 +103,28 @@ def main():
         print(f"Arquivo {ARQUIVO} não encontrado.")
         return
 
-    df = pd.read_excel(ARQUIVO)
+    # lê sempre como texto
+    df = pd.read_excel(ARQUIVO, dtype=str).fillna("")
 
-    # detecta a coluna que tem os sites
-    if "site" in df.columns:
-        site_col = "site"
-    else:
-        site_col = df.columns[0]  # assume que é a primeira
-
-    # saneia colunas existentes com e-mails
+    # limpa colunas já existentes com emails
     for col in list(df.columns):
         if "email" in col.lower():
             df[col] = df[col].apply(limpar_lista_emails_str)
 
-    # garante colunas de chutados (e força tipo string)
+    # garante colunas para e-mails chutados
     for col in PADROES_COLUNAS:
         if col not in df.columns:
             df[col] = ""
-        df[col] = df[col].astype(str)
+        df[col] = df[col].astype(str).fillna("")
 
-    # colunas auxiliares (também como string)
-    if "emails_extraidos" not in df.columns:
-        df["emails_extraidos"] = ""
-    df["emails_extraidos"] = df["emails_extraidos"].astype(str)
-
-    if "mx_status" not in df.columns:
-        df["mx_status"] = ""
-    df["mx_status"] = df["mx_status"].astype(str)
-
-    if "mx_ok" not in df.columns:
-        df["mx_ok"] = ""
-    df["mx_ok"] = df["mx_ok"].astype(str)
+    # garante colunas auxiliares
+    for aux in ["emails_extraidos", "mx_status", "mx_ok"]:
+        if aux not in df.columns:
+            df[aux] = ""
+        df[aux] = df[aux].astype(str).fillna("")
 
     for i, row in df.iterrows():
-        site_raw = str(row.get(site_col, "")).strip()
+        site_raw = str(row.get("site", "") or row.get(df.columns[0], "")).strip()
         if not site_raw:
             continue
 
@@ -156,14 +144,14 @@ def main():
             df.at[i, "mx_status"] = "ignorado_rede_social"
             continue
 
-        # extrai e-mails reais
+        # extrair emails reais do site
         if not str(df.at[i, "emails_extraidos"]).strip():
             url_busca = site_raw if site_raw.startswith(("http://","https://")) else f"https://{host}"
             extraidos = extrair_emails_site(url_busca)
             if extraidos:
                 df.at[i, "emails_extraidos"] = ", ".join(extraidos)
 
-        # checa MX
+        # verificar MX
         if not dominio_tem_mx(host):
             for col in PADROES_COLUNAS:
                 df.at[i, col] = ""
@@ -174,13 +162,13 @@ def main():
             df.at[i, "mx_ok"] = "SIM"
             df.at[i, "mx_status"] = "mx_ok"
 
-        # gera chutados
+        # gerar e-mails chutados
         for col in PADROES_COLUNAS:
-            if pd.isna(df.at[i, col]) or str(df.at[i, col]).strip() == "":
+            if not str(df.at[i, col]).strip():
                 df.at[i, col] = f"{col}@{host}"
 
     df.to_excel(ARQUIVO, index=False)
-    print("Arquivo atualizado com colunas como string, sem warnings.")
+    print("Arquivo atualizado com e-mails chutados e extraídos.")
 
 if __name__ == "__main__":
     main()
